@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: fullmcqgen
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn fullmcqgen:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GOOGLE_GEMINI_KEY
+        sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false
+
+  - type: web
+    name: courserecommendation
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn courserecommendataion:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GOOGLE_GEMINI_KEY
+        sync: false
+
+  - type: web
+    name: fullcoursegen
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn fullcoursegen:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GOOGLE_GEMINI_KEY
+        sync: false
