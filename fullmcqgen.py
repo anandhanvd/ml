@@ -9,7 +9,6 @@ import uvicorn
 import re
 from fastapi.middleware.cors import CORSMiddleware  # Import CORSMiddleware
 import asyncio
-from student_level_predictor import StudentLevelPredictor
 
 load_dotenv()
 genai.configure(api_key=os.getenv("GOOGLE_GEMINI_KEY"))
@@ -47,17 +46,9 @@ class UserLevel(str, Enum):
     INTERMEDIATE = "Intermediate"
     ADVANCED = "Advanced"
 
-# Initialize predictor and train model if needed
-predictor = StudentLevelPredictor()
-try:
-    predictor.load_model()
-except Exception as e:
-    print("Training new model...")
-    predictor.train()
-
 class QuizResult(BaseModel):
-    score: float = Field(..., description="Quiz score")
-    time_taken: float = Field(..., description="Time taken in seconds")
+    score: float = Field(..., ge=0, le=9, description="Score achieved in the quiz (0-9)")
+    time_taken: float = Field(..., gt=0, description="Time taken to complete the quiz in seconds")
 
 
 def predict_user_level(score: float, time_taken: float) -> UserLevel:
@@ -72,23 +63,16 @@ def predict_user_level(score: float, time_taken: float) -> UserLevel:
         return UserLevel.BEGINNER
     
 
-@app.post("/predict-level")
+@app.post("/predict-level", response_model=UserLevel)
 async def predict_level(quiz_result: QuizResult):
     """
-    Predict the user's level based on quiz score and time taken
+    Predict the user's level based on their quiz score and time taken.
     """
     try:
         level = predict_user_level(quiz_result.score, quiz_result.time_taken)
-        
-        # Return the level in lowercase to match frontend expectations
-        return level.value.lower()
-        
+        return level
     except Exception as e:
-        print(f"Prediction error: {str(e)}")
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Error making prediction: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
 
 class CourseRequest(BaseModel):
     subject: str = Field(..., description="The subject of the course")
@@ -99,63 +83,50 @@ class CourseRequest(BaseModel):
 
 
 async def generate_mcqs(unit_data: dict, subject: str, difficulty: str, focus_area: str):
-    """Generate MCQs for the unit"""
+    """Generate MCQs for each topic in a unit"""
     mcq_prompt = f"""
-    Generate Multiple Choice Questions (MCQs) specifically for:
-    Subject: {subject}
-    Focus Area: {focus_area}
-    Unit Title: {unit_data['unitTitle']}
-    Difficulty: {difficulty}
-
-    Important Instructions:
-    1. Questions MUST be directly related to {subject} and {focus_area}
-    2. All questions should match the {difficulty} difficulty level
-    3. Each question should test understanding of {unit_data['unitTitle']}
-    4. Include practical applications and real-world scenarios
-    5. Ensure explanations are clear and educational
-    6. there can be calculations in the questions but the answer should be a whole number
+    Generate Multiple Choice Questions (MCQs) for the unit "{unit_data['unitTitle']}" in {subject}.
+    Difficulty level: {difficulty}
+    Focus area: {focus_area}
 
     Return the response in this JSON format:
     {{
-        "assessment": {{
-            "unitAssessment": [
-                {{
-                    "topic": "{subject} - {focus_area}",
-                    "questions": [
-                        {{
-                            "questionId": "unique_id",
-                            "question": "Question text",
-                            "options": ["Option A", "Option B", "Option C", "Option D"],
-                            "correctAnswer": "Correct option",
-                            "explanation": "Detailed explanation"
-                        }}
-                    ]
-                }}
-            ]
-        }}
+        "unitAssessment": [
+            {{
+                "topic": "Topic Name",
+                "questions": [
+                    {{
+                        "questionId": "unique_id",
+                        "question": "Question text",
+                        "options": [
+                            "Option A",
+                            "Option B",
+                            "Option C",
+                            "Option D"
+                        ],
+                        "correctAnswer": "Correct option",
+                        "explanation": "Explanation of the correct answer"
+                    }}
+                ]
+            }}
+        ]
     }}
 
-    Generate exactly 3 MCQs that are highly relevant to {subject} and {focus_area}.
+    Generate at least 3 MCQs per topic,and only 3 topics, ensuring they match the difficulty level.
     """
     
     try:
         response = model.generate_content(mcq_prompt)
         cleaned_json = re.sub(r"^```json|```$", "", response.text, flags=re.MULTILINE).strip()
+        print(f"MCQ generation response for {unit_data['unitTitle']}: {cleaned_json}")
+        
         mcq_data = json.loads(cleaned_json)
-        
-        # Validate that questions are relevant
-        for topic in mcq_data["assessment"]["unitAssessment"]:
-            if not any(focus_area.lower() in q["question"].lower() or 
-                      subject.lower() in q["question"].lower() 
-                      for q in topic["questions"]):
-                raise ValueError("Generated questions are not relevant to the subject and focus area")
-        
         return mcq_data
     except Exception as e:
-        print(f"Error generating MCQs: {str(e)}")
+        print(f"Error generating MCQs for unit {unit_data['unitTitle']}: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to generate relevant MCQs: {str(e)}"
+            detail=f"Failed to generate MCQs for unit {unit_data['unitTitle']}: {str(e)}"
         )
 
 async def get_unit_details(unit_title: str, subject: str, difficulty: str, focus_area: str):
