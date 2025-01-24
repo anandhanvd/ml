@@ -9,6 +9,7 @@ import uvicorn
 import re
 from fastapi.middleware.cors import CORSMiddleware  # Import CORSMiddleware
 import asyncio
+from student_level_predictor import StudentLevelPredictor
 
 load_dotenv()
 genai.configure(api_key=os.getenv("GOOGLE_GEMINI_KEY"))
@@ -46,9 +47,19 @@ class UserLevel(str, Enum):
     INTERMEDIATE = "Intermediate"
     ADVANCED = "Advanced"
 
+# Initialize predictor and train model if needed
+predictor = StudentLevelPredictor()
+try:
+    predictor.load_model()
+except Exception as e:
+    print("Training new model...")
+    predictor.train()
+
 class QuizResult(BaseModel):
-    score: float = Field(..., ge=0, le=9, description="Score achieved in the quiz (0-9)")
-    time_taken: float = Field(..., gt=0, description="Time taken to complete the quiz in seconds")
+    time_per_question: float = Field(..., gt=0)
+    question_difficulty: float = Field(..., ge=1, le=10)
+    topic_difficulty: float = Field(..., ge=1, le=10)
+    score_percentage: float = Field(..., ge=0, le=100)
 
 
 def predict_user_level(score: float, time_taken: float) -> UserLevel:
@@ -63,16 +74,26 @@ def predict_user_level(score: float, time_taken: float) -> UserLevel:
         return UserLevel.BEGINNER
     
 
-@app.post("/predict-level", response_model=UserLevel)
+@app.post("/predict-level")
 async def predict_level(quiz_result: QuizResult):
     """
-    Predict the user's level based on their quiz score and time taken.
+    Predict the user's level based on comprehensive quiz metrics
     """
     try:
-        level = predict_user_level(quiz_result.score, quiz_result.time_taken)
-        return level
+        prediction = predictor.predict({
+            'time_per_question': quiz_result.time_per_question,
+            'question_difficulty': quiz_result.question_difficulty,
+            'topic_difficulty': quiz_result.topic_difficulty,
+            'score_percentage': quiz_result.score_percentage
+        })
+        
+        return prediction
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
+        print(f"Prediction error: {str(e)}")  # For debugging
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error making prediction: {str(e)}"
+        )
 
 class CourseRequest(BaseModel):
     subject: str = Field(..., description="The subject of the course")
