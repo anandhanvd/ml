@@ -78,24 +78,13 @@ async def predict_level(quiz_result: QuizResult):
     Predict the user's level based on quiz score and time taken
     """
     try:
-        # Convert the simple metrics to our model's expected format
-        # Using some reasonable defaults for difficulty levels
-        features = {
-            'time_per_question': quiz_result.time_taken / 10,  # assuming 10 questions
-            'question_difficulty': 5.0,  # medium difficulty
-            'topic_difficulty': 5.0,    # medium difficulty
-            'score_percentage': (quiz_result.score / 10) * 100  # assuming out of 10
-        }
+        level = predict_user_level(quiz_result.score, quiz_result.time_taken)
         
-        prediction = predictor.predict(features)
+        # Return the level in lowercase to match frontend expectations
+        return level.value.lower()
         
-        # Return in the format expected by frontend
-        return {
-            "level": prediction['level'].lower(),  # frontend expects lowercase
-            "message": f"Based on your score of {quiz_result.score} and time of {quiz_result.time_taken} seconds"
-        }
     except Exception as e:
-        print(f"Prediction error: {str(e)}")  # For debugging
+        print(f"Prediction error: {str(e)}")
         raise HTTPException(
             status_code=500, 
             detail=f"Error making prediction: {str(e)}"
@@ -110,50 +99,63 @@ class CourseRequest(BaseModel):
 
 
 async def generate_mcqs(unit_data: dict, subject: str, difficulty: str, focus_area: str):
-    """Generate MCQs for each topic in a unit"""
+    """Generate MCQs for the unit"""
     mcq_prompt = f"""
-    Generate Multiple Choice Questions (MCQs) for the unit "{unit_data['unitTitle']}" in {subject}.
-    Difficulty level: {difficulty}
-    Focus area: {focus_area}
+    Generate Multiple Choice Questions (MCQs) specifically for:
+    Subject: {subject}
+    Focus Area: {focus_area}
+    Unit Title: {unit_data['unitTitle']}
+    Difficulty: {difficulty}
+
+    Important Instructions:
+    1. Questions MUST be directly related to {subject} and {focus_area}
+    2. All questions should match the {difficulty} difficulty level
+    3. Each question should test understanding of {unit_data['unitTitle']}
+    4. Include practical applications and real-world scenarios
+    5. Ensure explanations are clear and educational
+    6. there can be calculations in the questions but the answer should be a whole number
 
     Return the response in this JSON format:
     {{
-        "unitAssessment": [
-            {{
-                "topic": "Topic Name",
-                "questions": [
-                    {{
-                        "questionId": "unique_id",
-                        "question": "Question text",
-                        "options": [
-                            "Option A",
-                            "Option B",
-                            "Option C",
-                            "Option D"
-                        ],
-                        "correctAnswer": "Correct option",
-                        "explanation": "Explanation of the correct answer"
-                    }}
-                ]
-            }}
-        ]
+        "assessment": {{
+            "unitAssessment": [
+                {{
+                    "topic": "{subject} - {focus_area}",
+                    "questions": [
+                        {{
+                            "questionId": "unique_id",
+                            "question": "Question text",
+                            "options": ["Option A", "Option B", "Option C", "Option D"],
+                            "correctAnswer": "Correct option",
+                            "explanation": "Detailed explanation"
+                        }}
+                    ]
+                }}
+            ]
+        }}
     }}
 
-    Generate at least 3 MCQs per topic,and only 3 topics, ensuring they match the difficulty level.
+    Generate exactly 3 MCQs that are highly relevant to {subject} and {focus_area}.
     """
     
     try:
         response = model.generate_content(mcq_prompt)
         cleaned_json = re.sub(r"^```json|```$", "", response.text, flags=re.MULTILINE).strip()
-        print(f"MCQ generation response for {unit_data['unitTitle']}: {cleaned_json}")
-        
         mcq_data = json.loads(cleaned_json)
+        
+        # Validate that questions are relevant
+        for topic in mcq_data["assessment"]["unitAssessment"]:
+            if not any(focus_area.lower() in q["question"].lower() or 
+                      subject.lower() in q["question"].lower() 
+                      for q in topic["questions"]):
+                raise ValueError("Generated questions are not relevant to the subject and focus area")
+        
         return mcq_data
     except Exception as e:
-        print(f"Error generating MCQs for unit {unit_data['unitTitle']}: {str(e)}")
+        print(f"Error generating MCQs: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to generate MCQs for unit {unit_data['unitTitle']}: {str(e)}"
+            detail=f"Failed to generate relevant MCQs: {str(e)}"
         )
 
 async def get_unit_details(unit_title: str, subject: str, difficulty: str, focus_area: str):
