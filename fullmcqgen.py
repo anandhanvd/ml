@@ -56,10 +56,8 @@ except Exception as e:
     predictor.train()
 
 class QuizResult(BaseModel):
-    time_per_question: float = Field(..., gt=0)
-    question_difficulty: float = Field(..., ge=1, le=10)
-    topic_difficulty: float = Field(..., ge=1, le=10)
-    score_percentage: float = Field(..., ge=0, le=100)
+    score: float = Field(..., description="Quiz score")
+    time_taken: float = Field(..., description="Time taken in seconds")
 
 
 def predict_user_level(score: float, time_taken: float) -> UserLevel:
@@ -77,17 +75,25 @@ def predict_user_level(score: float, time_taken: float) -> UserLevel:
 @app.post("/predict-level")
 async def predict_level(quiz_result: QuizResult):
     """
-    Predict the user's level based on comprehensive quiz metrics
+    Predict the user's level based on quiz score and time taken
     """
     try:
-        prediction = predictor.predict({
-            'time_per_question': quiz_result.time_per_question,
-            'question_difficulty': quiz_result.question_difficulty,
-            'topic_difficulty': quiz_result.topic_difficulty,
-            'score_percentage': quiz_result.score_percentage
-        })
+        # Convert the simple metrics to our model's expected format
+        # Using some reasonable defaults for difficulty levels
+        features = {
+            'time_per_question': quiz_result.time_taken / 10,  # assuming 10 questions
+            'question_difficulty': 5.0,  # medium difficulty
+            'topic_difficulty': 5.0,    # medium difficulty
+            'score_percentage': (quiz_result.score / 10) * 100  # assuming out of 10
+        }
         
-        return prediction
+        prediction = predictor.predict(features)
+        
+        # Return in the format expected by frontend
+        return {
+            "level": prediction['level'].lower(),  # frontend expects lowercase
+            "message": f"Based on your score of {quiz_result.score} and time of {quiz_result.time_taken} seconds"
+        }
     except Exception as e:
         print(f"Prediction error: {str(e)}")  # For debugging
         raise HTTPException(
